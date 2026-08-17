@@ -108,24 +108,17 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
 fn quota_suffix(snap: Option<&UsageSnapshot>) -> Option<String> {
     let snap = snap?;
-    let sess = snap.session.as_ref()?;
-    let pct = if sess.maximum_tokens > 0.0 {
-        sess.remaining_tokens / sess.maximum_tokens * 100.0
+    let bucket = snap.session.as_ref().or(snap.weekly.as_ref())?;
+    let pct = if bucket.maximum_tokens > 0.0 {
+        bucket.remaining_tokens / bucket.maximum_tokens * 100.0
     } else {
         0.0
     };
-    let wk = snap
-        .weekly
-        .as_ref()
-        .map(|w| {
-            if w.maximum_tokens > 0.0 {
-                format!(" {:.0}% wk", w.remaining_tokens / w.maximum_tokens * 100.0)
-            } else {
-                String::new()
-            }
-        })
-        .unwrap_or_default();
-    Some(format!("{pct:.0}% 5h{wk}"))
+    let is_weekly = snap.session.is_none();
+    Some(format!(
+        "{pct:.0}% {}",
+        if is_weekly { "wk" } else { "5h" }
+    ))
 }
 
 /// Show or hide the small always-on-top panel next to the cursor.

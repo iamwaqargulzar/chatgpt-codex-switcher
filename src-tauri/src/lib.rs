@@ -129,6 +129,26 @@ async fn refresh_account(
     {
         let mut vault = state.vault.lock().unwrap();
         vault.set_snapshot(id, snap.clone())?;
+
+        // Self-heal the account's email/name from the quota payload (covers
+        // accounts imported before email extraction was fixed).
+        if let Some(email) = &snap.email {
+            if let Some(mut acc) = vault.account(id) {
+                let default_name = acc.name.is_empty() || acc.name == "Imported account";
+                if acc.email.as_deref() != Some(email.as_str()) || default_name {
+                    acc.email = Some(email.clone());
+                    if default_name {
+                        acc.name = email
+                            .split('@')
+                            .next()
+                            .unwrap_or("ChatGPT account")
+                            .to_string();
+                    }
+                    vault.upsert(acc)?;
+                    let _ = app.emit("vault://changed", ());
+                }
+            }
+        }
     }
     let _ = app.emit("usage://updated", &snap);
 

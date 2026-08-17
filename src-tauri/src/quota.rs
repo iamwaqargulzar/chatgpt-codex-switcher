@@ -220,6 +220,7 @@ impl QuotaClient {
         // windows, credits, spend control, and reset credits.
         let v = self.get_json(&format!("{BASE}/codex/usage"), tokens).await?;
         snap.plan = dig_string(&v, "plan_type");
+        snap.email = dig_string(&v, "email");
         if snap.account_id.is_none() {
             snap.account_id = dig_string(&v, "account_id");
         }
@@ -532,16 +533,10 @@ pub fn dig_f64(v: &Value, key: &str) -> Option<f64> {
 /// token came from the official token endpoint over TLS).
 pub fn jwt_claim(id_token: &str, claim: &str) -> Option<String> {
     let part = id_token.split('.').nth(1)?;
-    let padded = {
-        let mut p = part.to_string();
-        while p.len() % 4 != 0 {
-            p.push('=');
-        }
-        p
-    };
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-    let bytes = URL_SAFE_NO_PAD.decode(padded).ok()?;
+    // JWT payloads are unpadded base64url — decode the raw segment.
+    let bytes = URL_SAFE_NO_PAD.decode(part).ok()?;
     let v: Value = serde_json::from_slice(&bytes).ok()?;
     dig_string(&v, claim)
 }

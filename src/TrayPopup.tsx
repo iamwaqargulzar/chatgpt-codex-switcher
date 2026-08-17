@@ -123,9 +123,9 @@ export default function TrayPopup() {
                 </span>
               </div>
             )}
-            {sess && (
+            {(sess ?? weekly) && (
               <div className="acct-sub mono" style={{ fontSize: 11 }}>
-                resets {fmtReset(sess.resetAt, now)}
+                resets {fmtReset((sess ?? weekly)!.resetAt, now)}
                 {snap.resetCredits ? ` · ${snap.resetCredits.availableCount} reset credits` : ""}
               </div>
             )}
@@ -154,7 +154,8 @@ export default function TrayPopup() {
 
       <div className="tray-accts">
         {bundle.accounts.map((a) => {
-          const s = bundle.snapshots[a.id]?.session ?? null;
+          const snap = bundle.snapshots[a.id];
+          const s = snap?.session ?? snap?.weekly ?? null;
           return (
             <button
               key={a.id}

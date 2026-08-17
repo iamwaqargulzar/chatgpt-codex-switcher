@@ -1,4 +1,4 @@
-import { fmtTokens, initials } from "../lib/format";
+import { initials, pctOf } from "../lib/format";
 import type { AccountPublic, UsageSnapshot } from "../types";
 import { MiniBar } from "./Gauge";
 
@@ -13,7 +13,10 @@ export function AccountRow({
   selected: boolean;
   onClick: () => void;
 }) {
-  const sess = snapshot?.session ?? null;
+  // Session window when present, otherwise the weekly limit — the sidebar
+  // always shows the account's most pressing window.
+  const bucket = snapshot?.session ?? snapshot?.weekly ?? null;
+  const isWeekly = !snapshot?.session && !!snapshot?.weekly;
   return (
     <div
       className={`acct-row ${selected ? "selected" : ""} ${account.active ? "active-row" : ""}`}
@@ -28,12 +31,10 @@ export function AccountRow({
         </div>
       </div>
       <div className="acct-side">
-        {sess && <MiniBar bucket={sess} />}
-        {sess && (
+        {bucket && <MiniBar bucket={bucket} />}
+        {bucket && (
           <div className="acct-sub mono" style={{ marginTop: 3 }}>
-            {sess.unit === "pct"
-              ? `${Math.round(sess.remainingTokens)}%`
-              : fmtTokens(sess.remainingTokens)}
+            {Math.round(pctOf(bucket))}% {isWeekly ? "wk" : "5h"}
           </div>
         )}
       </div>

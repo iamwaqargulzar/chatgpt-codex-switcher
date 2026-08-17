@@ -100,10 +100,15 @@ export function QuotaPanel({
                 <div className="big">📡</div>
                 No usage data yet — hit Refresh.
               </div>
+            ) : !sess && !weekly ? (
+              <div className="empty">
+                <div className="big">📡</div>
+                This account reports no limit windows right now.
+              </div>
             ) : (
-              <div className="gauges">
-                <Gauge bucket={sess} label="Session · 5h" now={now} />
-                <Gauge bucket={weekly} label="Weekly" now={now} />
+              <div className="gauges" style={{ justifyContent: "space-around" }}>
+                {sess && <Gauge bucket={sess} label="Session window" now={now} />}
+                {weekly && <Gauge bucket={weekly} label="Weekly limit" now={now} />}
               </div>
             )}
           </div>
@@ -221,8 +226,8 @@ export function QuotaPanel({
             </div>
             <div className="sched-row">
               <span className="label">
-                <b>After each 5h reset</b>
-                <div className="hint">warm once whenever the session window resets (skips empty weekly limits)</div>
+                <b>After each reset window</b>
+                <div className="hint">warm once whenever a limit window resets (skips empty weekly limits)</div>
               </span>
               <Switch checked={account.warmup.autoAfterReset} onChange={(v) => updateWarmup({ autoAfterReset: v })} />
             </div>

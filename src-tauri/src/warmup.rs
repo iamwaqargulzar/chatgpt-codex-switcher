@@ -84,8 +84,13 @@ async fn evaluate(
         let mut reason = String::new();
 
         if account.warmup.auto_after_reset {
-            if let Some(sess) = snap.and_then(|s| s.session.as_ref()) {
-                if sess.reset_at <= now.timestamp() {
+            // Prefer the session window; fall back to the weekly window on
+            // accounts that only have one (ChatGPT dropped the 5h window).
+            let window = snap
+                .and_then(|s| s.session.as_ref())
+                .or_else(|| snap.and_then(|s| s.weekly.as_ref()));
+            if let Some(w) = window {
+                if w.reset_at <= now.timestamp() {
                     let last = inner
                         .lock()
                         .unwrap()
@@ -93,15 +98,22 @@ async fn evaluate(
                         .get(&account.id)
                         .copied()
                         .unwrap_or(0);
-                    if last < sess.reset_at {
-                        // Skip only when the weekly window is truly empty.
-                        let weekly_ok = snap
+                    if last < w.reset_at {
+                        // When warming the session, skip if the weekly window
+                        // is truly empty. Warming the weekly itself is fine
+                        // right after its own reset.
+                        let weekly_empty = snap
                             .and_then(|s| s.weekly.as_ref())
-                            .map(|w| w.remaining_tokens > 0.0)
-                            .unwrap_or(true);
-                        if weekly_ok {
+                            .map(|x| x.remaining_tokens <= 0.0)
+                            .unwrap_or(false);
+                        let warming_weekly = w.name == "weekly";
+                        if !weekly_empty || warming_weekly {
                             do_warm = true;
-                            reason = format!("5-hour window reset at {}", fmt_ts(sess.reset_at));
+                            reason = format!(
+                                "{} window reset at {}",
+                                if warming_weekly { "weekly" } else { "session" },
+                                fmt_ts(w.reset_at)
+                            );
                         }
                     }
                 }

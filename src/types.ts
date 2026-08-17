@@ -73,6 +73,7 @@ export interface UsageStats {
 export interface UsageSnapshot {
   fetchedAt: number;
   accountId: string | null;
+  email: string | null;
   plan: string | null;
   subscriptionExpiresAt: number | null;
   systemHardLimitUsd: number | null;

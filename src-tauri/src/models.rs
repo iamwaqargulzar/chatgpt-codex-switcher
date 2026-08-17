@@ -155,6 +155,7 @@ pub struct UsageStats {
 pub struct UsageSnapshot {
     pub fetched_at: i64,
     pub account_id: Option<String>,
+    pub email: Option<String>,
     pub plan: Option<String>,
     pub subscription_expires_at: Option<i64>,
     pub system_hard_limit_usd: Option<f64>,
