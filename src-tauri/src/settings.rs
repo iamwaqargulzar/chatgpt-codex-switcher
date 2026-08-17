@@ -12,6 +12,8 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub notifications: bool,
     pub compact: bool,
+    #[serde(default)]
+    pub hide_emails: bool,
     pub refresh_interval_secs: u64,
     pub warmup_tick_secs: u64,
     pub terminal_preset: String,
@@ -28,6 +30,7 @@ impl Default for Settings {
             launch_at_login: false,
             notifications: true,
             compact: false,
+            hide_emails: false,
             refresh_interval_secs: 300,
             warmup_tick_secs: 20,
             terminal_preset: "auto".into(),

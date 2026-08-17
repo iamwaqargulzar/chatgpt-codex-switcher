@@ -133,6 +133,7 @@ export interface Settings {
   launchAtLogin: boolean;
   notifications: boolean;
   compact: boolean;
+  hideEmails: boolean;
   refreshIntervalSecs: number;
   warmupTickSecs: number;
   terminalPreset: string;

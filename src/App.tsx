@@ -281,7 +281,11 @@ export default function App() {
   }
 
   return (
-    <div className={`app ${bundle.settings.compact ? "compact" : ""}`}>
+    <div
+      className={`app ${bundle.settings.compact ? "compact" : ""} ${
+        bundle.settings.hideEmails ? "hide-emails" : ""
+      }`}
+    >
       {/* ---------- sidebar ---------- */}
       <aside className="sidebar">
         <div className="brand">

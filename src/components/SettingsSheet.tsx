@@ -87,6 +87,10 @@ export function SettingsSheet({
           <Switch checked={s.compact} onChange={(v) => patch({ compact: v })} />
         ))}
 
+        {row("Blur email addresses", "emails are blurred until you hover over them", (
+          <Switch checked={s.hideEmails} onChange={(v) => patch({ hideEmails: v })} />
+        ))}
+
         {row("Usage refresh interval", "seconds between background quota refreshes", (
           <input
             className="input mono"

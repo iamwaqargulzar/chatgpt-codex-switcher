@@ -1,6 +1,7 @@
 /* CodexDesk design system — hand-written, single source of truth. */
 
 :root {
+  color-scheme: dark;
   --bg: #0d1117;
   --bg2: #10151d;
   --panel: #161c26;
@@ -26,6 +27,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg: #f4f6f8;
   --bg2: #eceff3;
   --panel: #ffffff;
@@ -484,6 +486,17 @@ textarea {
 .acct-hero .email {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Email privacy: blur on sight, reveal on hover. */
+.hide-emails .email {
+  filter: blur(4px);
+  transition: filter 0.1s;
+  cursor: default;
+}
+
+.hide-emails .email:hover {
+  filter: none;
 }
 
 .badge {
@@ -986,6 +999,18 @@ textarea {
   outline: none;
   color: var(--text);
   user-select: text;
+}
+
+/* Native select popups on Linux render with GTK styling; make sure both the
+   closed control and its option list are always readable. */
+.select {
+  color: var(--text);
+  background: var(--panel2);
+}
+
+.select option {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .input:focus,
