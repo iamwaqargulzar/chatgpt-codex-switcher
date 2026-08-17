@@ -1,0 +1,46 @@
+[package]
+name = "codexdesk"
+version = "0.1.0"
+description = "Desktop control center for the official Codex CLI"
+authors = ["CodexDesk contributors"]
+edition = "2021"
+
+[lib]
+name = "codexdesk_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+rand = "0.9"
+base64 = "0.22"
+sha2 = "0.10"
+url = "2"
+keyring = "3"
+aes-gcm = "0.10"
+toml = "0.8"
+thiserror = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "codexdesk"
+path = "src/main.rs"
+
+[[bin]]
+name = "codexdesk-cli"
+path = "src/bin/codexdesk-cli.rs"

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="cardA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ecf8e"/>
+      <stop offset="1" stop-color="#17b26a"/>
+    </linearGradient>
+    <linearGradient id="cardB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5a623"/>
+      <stop offset="1" stop-color="#e08e0b"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+
+  <!-- left card -->
+  <g transform="rotate(-4 320 512)">
+    <rect x="140" y="320" width="320" height="384" rx="64" fill="url(#cardA)"/>
+    <rect x="196" y="392" width="208" height="26" rx="13" fill="#ffffff" opacity="0.92"/>
+    <rect x="196" y="448" width="150" height="22" rx="11" fill="#ffffff" opacity="0.45"/>
+    <rect x="196" y="494" width="176" height="22" rx="11" fill="#ffffff" opacity="0.45"/>
+    <circle cx="404" cy="648" r="34" fill="#ffffff" opacity="0.85"/>
+  </g>
+
+  <!-- right card -->
+  <g transform="rotate(4 704 512)">
+    <rect x="564" y="320" width="320" height="384" rx="64" fill="url(#cardB)"/>
+    <rect x="620" y="392" width="208" height="26" rx="13" fill="#ffffff" opacity="0.92"/>
+    <rect x="620" y="448" width="150" height="22" rx="11" fill="#ffffff" opacity="0.45"/>
+    <rect x="620" y="494" width="176" height="22" rx="11" fill="#ffffff" opacity="0.45"/>
+    <circle cx="460" cy="648" r="34" fill="#ffffff" opacity="0.85"/>
+  </g>
+
+  <!-- swap loop between the cards -->
+  <circle cx="512" cy="512" r="118" fill="#0d1117"/>
+  <circle cx="512" cy="512" r="118" fill="none" stroke="#30363d" stroke-width="10"/>
+  <path d="M 470 452 A 84 84 0 0 1 570 460" fill="none" stroke="#3ecf8e" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 566 472 L 578 452 L 596 466 Z" fill="#3ecf8e"/>
+  <path d="M 554 572 A 84 84 0 0 1 454 564" fill="none" stroke="#f5a623" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 458 552 L 446 572 L 428 558 Z" fill="#f5a623"/>
+</svg>
