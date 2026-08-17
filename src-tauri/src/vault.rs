@@ -53,17 +53,27 @@ pub struct Vault {
 fn load_or_create_key() -> Option<Vec<u8>> {
     let entry = keyring::Entry::new(SERVICE, USER).ok()?;
     match entry.get_password() {
-        Ok(p) => B64.decode(p).ok(),
+        Ok(p) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[vault] keyring key loaded ({} chars)", p.len());
+            B64.decode(p).ok()
+        }
         Err(keyring::Error::NoEntry) => {
             let mut key = vec![0u8; 32];
             rand::rng().fill_bytes(&mut key);
+            #[cfg(debug_assertions)]
+            eprintln!("[vault] creating new keyring key");
             if entry.set_password(&B64.encode(&key)).is_ok() {
                 Some(key)
             } else {
+                eprintln!("[vault] WARNING: could not store the vault key in the keyring");
                 None
             }
         }
-        Err(_) => None,
+        Err(e) => {
+            eprintln!("[vault] WARNING: keyring unavailable ({e}) — plaintext vault");
+            None
+        }
     }
 }
 
@@ -121,7 +131,16 @@ impl Vault {
             }
             None => String::from_utf8(plain).map_err(|e| AppError::Msg(e.to_string()))?,
         };
-        fs::write(&self.paths.vault_file, text)?;
+        // Atomic replace + rolling backup so a crash mid-save can never
+        // corrupt the vault.
+        let tmp = self.paths.vault_file.with_extension("json.tmp");
+        fs::write(&tmp, text)?;
+        set_private(&tmp);
+        if self.paths.vault_file.exists() {
+            let bak = self.paths.vault_file.with_extension("json.bak");
+            let _ = fs::copy(&self.paths.vault_file, &bak);
+        }
+        fs::rename(&tmp, &self.paths.vault_file)?;
         set_private(&self.paths.vault_file);
         Ok(())
     }

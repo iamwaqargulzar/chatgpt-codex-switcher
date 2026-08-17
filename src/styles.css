@@ -400,7 +400,7 @@ textarea {
   cursor: default;
 }
 
-.btn .spin {
+.spin {
   display: inline-block;
   width: 12px;
   height: 12px;
@@ -408,6 +408,10 @@ textarea {
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+.btn .spin {
+  border-width: 2px;
 }
 
 @keyframes spin {

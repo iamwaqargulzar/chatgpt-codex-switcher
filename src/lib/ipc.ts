@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ActivityEntry,
   AuditEntry,
-  OAuthDone,
   ProcessInfo,
   ProfileInfo,
   SessionInfo,
@@ -78,5 +77,3 @@ export const EV = {
   switchBlocked: "switch://blocked",
   popupOpened: "popup://opened",
 } as const;
-
-export type AuthDonePayload = OAuthDone;

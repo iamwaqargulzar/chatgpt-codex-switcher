@@ -1,6 +1,7 @@
 pub mod authz;
 pub mod desktop;
 pub mod error;
+pub mod gate;
 pub mod models;
 pub mod notify;
 pub mod paths;
@@ -207,7 +208,7 @@ async fn desk_import_auth(
     let value: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|_| AppError::Msg("that file is not valid JSON".into()))?;
 
-    let account = import_from_value(&value, &state)?;
+    let account = import_from_value(&value)?;
 
     // Duplicate handling: refresh the existing entry instead of stacking.
     let existing_id = {
@@ -261,7 +262,7 @@ fn same_identity(a: &Account, b: &Account) -> bool {
     }
 }
 
-fn import_from_value(value: &serde_json::Value, state: &State<'_, AppState>) -> R<Account> {
+fn import_from_value(value: &serde_json::Value) -> R<Account> {
     let now = chrono::Utc::now().timestamp();
     if let Some(key) = value.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
         if key.is_empty() {
@@ -313,7 +314,6 @@ fn import_from_value(value: &serde_json::Value, state: &State<'_, AppState>) -> 
             .and_then(|e| e.split('@').next())
             .unwrap_or("Imported account")
             .to_string();
-        let _ = state;
         return Ok(Account {
             id: random_id(),
             name,
@@ -849,17 +849,43 @@ pub fn run() {
         ])
         .setup(|app| {
             let paths = paths::resolve()?;
-            let vault = vault::Vault::load(paths.clone())?;
+            let mut vault = vault::Vault::load(paths.clone())?;
+
+            // Opt-in power feature: on first run, adopt the auth.json the
+            // official CLI is already using. Only with the explicit env var.
+            if std::env::var("CODEXDESK_IMPORT_EXISTING").is_ok()
+                && vault.accounts().is_empty()
+                && paths.auth_json.exists()
+            {
+                if let Ok(raw) = std::fs::read_to_string(&paths.auth_json) {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        if let Ok(account) = import_from_value(&value) {
+                            let id = account.id.clone();
+                            let _ = vault.upsert(account);
+                            let _ = vault.set_active(Some(&id));
+                            eprintln!("[codexdesk] adopted existing auth.json as account {id}");
+                        }
+                    }
+                }
+            }
+
             let mut settings = settings::load(&paths);
             settings.vault_encrypted = vault.encrypted();
             let warmup_engine = warmup::Warmup::new();
             let notify_engine = notify::Notify::new();
 
+            // Cloudflare gate: a tiny off-screen webview on chatgpt.com that
+            // carries a real challenge clearance for backend-api fetches.
+            gate::Gate::ensure_window(app)?;
+            let gate = gate::Gate::new(app.handle());
+            app.manage(gate.clone());
+            gate::listen(app.handle());
+
             let state = AppState {
                 paths: paths.clone(),
                 vault: Arc::new(Mutex::new(vault)),
                 settings: Arc::new(Mutex::new(settings.clone())),
-                http: quota::QuotaClient::new(),
+                http: quota::QuotaClient::with_gate(gate),
                 warmup: warmup_engine,
                 notify: notify_engine,
                 quitting: Arc::new(AtomicBool::new(false)),
@@ -871,12 +897,13 @@ pub fn run() {
                 let _ = app.autolaunch().enable();
             }
 
+            // State must be managed before anything reads it (tray menu does).
+            app.manage(state);
+            let state = app.state::<AppState>();
+
             trayui::build(app)?;
             trayui::rebuild_menu(app.handle());
             register_shortcut(app.handle(), settings.hotkey.as_deref());
-
-            app.manage(state);
-            let state = app.state::<AppState>();
 
             state.warmup.start(
                 app.handle().clone(),
@@ -891,6 +918,52 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     refresh_active(&app, true).await;
                 });
+            }
+
+            // Diagnostics: CODEXDESK_PROBE=<url> fetches it directly and via
+            // the gate, printing results to stderr. CODEXDESK_PROBE=home:<url>
+            // additionally downloads every JS bundle the page references.
+            if let Ok(probe_url) = std::env::var("CODEXDESK_PROBE") {
+                let http = state.http.clone();
+                let tokens = {
+                    let vault = state.vault.lock().unwrap();
+                    vault
+                        .active_id()
+                        .and_then(|id| vault.account(&id))
+                        .and_then(|a| a.auth.tokens.clone())
+                };
+                if let Some(tokens) = tokens {
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        if let Some(page) = probe_url.strip_prefix("home:") {
+                            http.probe(page, &tokens).await;
+                            let Ok(body) = std::fs::read("/tmp/probe_body.bin") else { return };
+                            let body = String::from_utf8_lossy(&body).to_string();
+                            let mut dump = String::new();
+                            let mut seen = std::collections::HashSet::new();
+                            let mut count = 0;
+                            for m in extract_scripts(&body) {
+                                if !seen.insert(m.clone()) || count >= 80 {
+                                    continue;
+                                }
+                                let url = format!("https://chatgpt.com{m}");
+                                eprintln!("[probe] bundle {url}");
+                                if let Ok((s, b)) = http.raw(&url, &tokens).await {
+                                    eprintln!("[probe]   {s} ({} bytes)", b.len());
+                                    if s == 200 {
+                                        dump.push_str(&b);
+                                        dump.push('\n');
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            let _ = std::fs::write("/tmp/probe_bundle_dump.js", dump);
+                            eprintln!("[probe] dumped {count} bundles");
+                        } else {
+                            http.probe(&probe_url, &tokens).await;
+                        }
+                    });
+                }
             }
 
             Ok(())
@@ -925,4 +998,21 @@ pub fn run() {
 fn _module_marker() {
     let _ = paths::resolve();
     let _ = error::R::<()>::Ok(());
+}
+
+/// Extract `/cdn/assets/*.js` references from an HTML page (diagnostics).
+fn extract_scripts(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for marker in ["href=\"", "src=\""] {
+        let mut rest = html;
+        while let Some(pos) = rest.find(marker) {
+            rest = &rest[pos + marker.len()..];
+            let Some(end) = rest.find('"') else { break };
+            let link = &rest[..end];
+            if link.starts_with("/cdn/assets/") && link.ends_with(".js") {
+                out.push(link.to_string());
+            }
+        }
+    }
+    out
 }

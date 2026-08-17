@@ -33,7 +33,7 @@ Built for **Linux first** — tested on **Ubuntu and Pop!_OS** — with macOS an
 - **Per-account profiles** — each account can carry its own Codex profile (`~/.codex/<name>.config.toml`): model, provider, sandbox, MCP servers, feature flags.
 - **Session browser** — list, resume, fork, archive, and delete your Codex CLI sessions from the GUI.
 - **Tray control** — switch accounts, check quota, and warm up from the system tray or the compact tray popup.
-- **CLI companion** — `codexdesk switch <account>`, `codexdesk status`, and friends, for pure-terminal workflows and scripts.
+- **CLI companion** — `codexdesk-cli switch <account>`, `codexdesk-cli status`, and friends, for pure-terminal workflows and scripts.
 - **Security first** — encrypted vault (OS keyring), zero telemetry, and a hard-coded network allowlist limited to OpenAI endpoints only.
 
 ## Features
@@ -62,7 +62,7 @@ Built for **Linux first** — tested on **Ubuntu and Pop!_OS** — with macOS an
 **Prerequisites:** [Rust](https://rustup.rs), [Node.js](https://nodejs.org) 18+, [pnpm](https://pnpm.io), and Tauri's Linux system libraries:
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
 ```bash
@@ -84,11 +84,16 @@ pnpm tauri dev
 ### CLI companion
 
 ```bash
-cargo install --path src-tauri --bin codexdesk
-codexdesk list          # list accounts
-codexdesk switch dev    # switch by name or id
-codexdesk status        # active account + quota snapshot
-codexdesk warmup all    # warm up all enabled accounts
+cargo install --path src-tauri --bin codexdesk-cli
+codexdesk-cli list          # list accounts
+codexdesk-cli switch dev    # switch by name
+codexdesk-cli status        # active account + quota snapshot
+```
+
+**First run with an existing CLI login:** CodexDesk can adopt the account your Codex CLI is already signed into (copies the credentials into the vault and marks it active):
+
+```bash
+CODEXDESK_IMPORT_EXISTING=1 codexdesk
 ```
 
 ## FAQ
@@ -122,14 +127,15 @@ Yes. Import an `auth.json` containing an `OPENAI_API_KEY`, or paste a key direct
 
 ## Roadmap
 
-- [ ] Account vault (OAuth, `auth.json` import, API key)
-- [ ] One-click switching with backup/restore and process detection
-- [ ] Rate-limit gauges, reset countdowns, reset-credits badges
-- [ ] Usage stats (lifetime, 7/30-day, streaks, integrations)
-- [ ] Warm-ups: manual, auto-after-reset, timed
-- [ ] Per-account profiles and session browser
-- [ ] Tray menu, tray popup, notifications, hotkeys
-- [ ] CLI companion (`codexdesk`)
+- [x] Account vault (OAuth, `auth.json` import, API key)
+- [x] One-click switching with backup/restore and process detection
+- [x] Rate-limit gauges, reset countdowns, reset-credits badges
+- [x] Usage stats (lifetime, 7/30-day, streaks, integrations)
+- [x] Warm-ups: manual, auto-after-reset, timed
+- [x] Per-account profiles and session browser
+- [x] Tray menu, tray popup, notifications, hotkeys
+- [x] CLI companion (`codexdesk-cli`)
+- [x] Cloudflare gate for live usage data
 - [ ] First signed release builds (.deb, AppImage, rpm)
 - [ ] macOS and Windows builds
 - [ ] Encrypted vault export/import for backups
@@ -141,6 +147,7 @@ Yes. Import an `auth.json` containing an `OPENAI_API_KEY`, or paste a key direct
 - **No listening ports** in normal operation (the OAuth callback binds to `127.0.0.1` only while a login is in progress).
 - **No auto-update daemon** — updates are checked only when you ask.
 - **Vault encrypted** with AES-256-GCM using a key stored in your OS keyring (falls back to `0600`-permission plaintext with a visible warning if no keyring is available).
+- **Cloudflare gate, transparently:** `chatgpt.com` sits behind Cloudflare's managed challenge, so plain HTTP clients can get 403 on some routes. CodexDesk keeps a tiny off-screen webview parked on `chatgpt.com` — a real browser engine that carries a genuine challenge clearance — and uses it to run the same-origin `backend-api` fetches when a direct request is challenged. That page can only emit the single fetch-reply event (its IPC capability is locked down), and no cookies are scraped from your browsers.
 
 ## Contributing
 

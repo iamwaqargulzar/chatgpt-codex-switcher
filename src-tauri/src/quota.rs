@@ -1,6 +1,6 @@
 use crate::error::{AppError, R};
 use crate::models::{
-    DayPoint, NameValue, RateBucket, ResetCredits, ResetCredit, SoftHard, TokenSet, UsageSnapshot,
+    DayPoint, NameValue, RateBucket, ResetCredits, ResetCredit, TokenSet, UsageSnapshot,
     UsageStats,
 };
 use chrono::{Duration, Utc};
@@ -10,6 +10,7 @@ use serde_json::Value;
 const BASE: &str = "https://chatgpt.com/backend-api";
 const TOKEN_ENDPOINT: &str = "https://auth.openai.com/oauth/token";
 
+#[derive(Debug)]
 pub enum QuotaError {
     Unauthorized,
     Other(String),
@@ -29,6 +30,7 @@ impl From<QuotaError> for AppError {
 #[derive(Clone)]
 pub struct QuotaClient {
     http: reqwest::Client,
+    gate: Option<crate::gate::Gate>,
 }
 
 impl QuotaClient {
@@ -39,9 +41,18 @@ impl QuotaClient {
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("static reqwest client"),
+            gate: None,
         }
     }
 
+    pub fn with_gate(gate: crate::gate::Gate) -> Self {
+        let mut c = Self::new();
+        c.gate = Some(gate);
+        c
+    }
+
+    /// Headers for account-scoped backend calls. The access token
+    /// authenticates; the id_token is only used by the check endpoint.
     fn headers(&self, tokens: &TokenSet) -> HeaderMap {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static(
@@ -51,17 +62,30 @@ impl QuotaClient {
         h.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
         h.insert(ORIGIN, HeaderValue::from_static("https://chatgpt.com"));
         h.insert(REFERER, HeaderValue::from_static("https://chatgpt.com/"));
-        let bearer = tokens
-            .id_token
-            .clone()
-            .unwrap_or_else(|| tokens.access_token.clone());
+        let bearer = if tokens.access_token.is_empty() {
+            tokens.id_token.clone().unwrap_or_default()
+        } else {
+            tokens.access_token.clone()
+        };
         if let Ok(v) = HeaderValue::from_str(&format!("Bearer {bearer}")) {
             h.insert(AUTHORIZATION, v);
         }
         h
     }
 
-    async fn get_json(&self, url: &str, tokens: &TokenSet) -> Result<Value, QuotaError> {
+    /// The account-check endpoint authenticates with the id_token.
+    fn id_headers(&self, tokens: &TokenSet) -> HeaderMap {
+        let mut h = self.headers(tokens);
+        if let Some(id_token) = &tokens.id_token {
+            if let Ok(v) = HeaderValue::from_str(&format!("Bearer {id_token}")) {
+                h.insert(AUTHORIZATION, v);
+            }
+        }
+        h
+    }
+
+    /// Direct request; returns (status, body) without interpreting it.
+    pub async fn raw(&self, url: &str, tokens: &TokenSet) -> Result<(u16, String), QuotaError> {
         let resp = self
             .http
             .get(url)
@@ -69,14 +93,53 @@ impl QuotaClient {
             .send()
             .await
             .map_err(|e| QuotaError::Other(e.to_string()))?;
-        match resp.status().as_u16() {
-            200 => resp
-                .json::<Value>()
-                .await
-                .map_err(|e| QuotaError::Other(e.to_string())),
-            401 | 403 => Err(QuotaError::Unauthorized),
-            other => Err(QuotaError::Other(format!("backend responded {other}"))),
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| QuotaError::Other(e.to_string()))?;
+        Ok((status, body))
+    }
+
+    /// Fetch JSON from the ChatGPT backend. Cloudflare 403s fall back to the
+    /// hidden webview gate, which carries a real challenge clearance.
+    async fn get_json(&self, url: &str, tokens: &TokenSet) -> Result<Value, QuotaError> {
+        let (status, body) = self.raw(url, tokens).await?;
+        #[cfg(debug_assertions)]
+        eprintln!("[quota] direct {status} <- {url}");
+        if status == 200 {
+            return serde_json::from_str(&body).map_err(|e| QuotaError::Other(e.to_string()));
         }
+        if status == 401 {
+            return Err(QuotaError::Unauthorized);
+        }
+
+        // Anything else (403 challenge pages, 5xx) gets one gate attempt.
+        if let Some(gate) = &self.gate {
+            let bearer = tokens
+                .id_token
+                .clone()
+                .unwrap_or_else(|| tokens.access_token.clone());
+            let (gstatus, gbody) = gate
+                .fetch("GET", url, &bearer, None)
+                .await
+                .map_err(QuotaError::Other)?;
+            if gstatus == 200 {
+                return serde_json::from_str(&gbody)
+                    .map_err(|e| QuotaError::Other(e.to_string()));
+            }
+            if gstatus == 401 {
+                return Err(QuotaError::Unauthorized);
+            }
+            let preview = gbody.chars().take(120).collect::<String>();
+            return Err(QuotaError::Other(format!(
+                "backend responded {gstatus}: {preview}"
+            )));
+        }
+
+        Err(QuotaError::Other(format!(
+            "backend responded {status} (blocked by Cloudflare — retry in a moment)"
+        )))
     }
 
     /// Resolve the ChatGPT account id for a token set.
@@ -86,12 +149,13 @@ impl QuotaClient {
                 return Ok(Some(id.clone()));
             }
         }
-        let v = self
-            .get_json(
-                &format!("{BASE}/accounts/check/v4-2023-04-27"),
-                tokens,
-            )
+        let resp = self
+            .http
+            .get(format!("{BASE}/accounts/check/v4-2023-04-27"))
+            .headers(self.id_headers(tokens))
+            .send()
             .await?;
+        let v: Value = resp.json().await?;
         let id = dig_string(&v, "account_id").or_else(|| {
             tokens
                 .id_token
@@ -134,6 +198,58 @@ impl QuotaClient {
         Ok(resp.json().await?)
     }
 
+    /// Diagnostics helper (CODEXDESK_PROBE): fetch a URL directly and via
+    /// the gate, printing status lines to stderr. When CODEXDESK_PROBE_METHOD
+    /// is POST, CODEXDESK_PROBE_BODY is sent through the gate only.
+    pub async fn probe(&self, url: &str, tokens: &TokenSet) {
+        let method = std::env::var("CODEXDESK_PROBE_METHOD").unwrap_or_else(|_| "GET".into());
+        let body = std::env::var("CODEXDESK_PROBE_BODY").ok();
+        if method == "POST" {
+            if let Some(gate) = &self.gate {
+                let bearer = tokens
+                    .id_token
+                    .clone()
+                    .unwrap_or_else(|| tokens.access_token.clone());
+                match gate.fetch("POST", url, &bearer, body.as_deref()).await {
+                    Ok((s, b)) => {
+                        eprintln!("[probe] gate {s} <- {url} ({} bytes)", b.len());
+                        let _ = std::fs::write("/tmp/probe_body.bin", &b);
+                        if s != 200 {
+                            eprintln!("[probe] gate body: {}", b.chars().take(300).collect::<String>());
+                        }
+                    }
+                    Err(e) => eprintln!("[probe] gate error: {e}"),
+                }
+            }
+            return;
+        }
+        match self.raw(url, tokens).await {
+            Ok((s, body)) => {
+                eprintln!("[probe] direct {s} <- {url} ({} bytes)", body.len());
+                let _ = std::fs::write("/tmp/probe_body.bin", &body);
+                if s != 200 {
+                    eprintln!("[probe] body: {}", body.chars().take(200).collect::<String>());
+                }
+            }
+            Err(e) => eprintln!("[probe] direct error: {e:?}"),
+        }
+        if let Some(gate) = &self.gate {
+            let bearer = tokens
+                .id_token
+                .clone()
+                .unwrap_or_else(|| tokens.access_token.clone());
+            match gate.fetch("GET", url, &bearer, None).await {
+                Ok((s, body)) => {
+                    eprintln!("[probe] gate {s} <- {url}");
+                    if s != 200 {
+                        eprintln!("[probe] gate body: {}", body.chars().take(200).collect::<String>());
+                    }
+                }
+                Err(e) => eprintln!("[probe] gate error: {e}"),
+            }
+        }
+    }
+
     /// Lightweight call used by warm-ups: proves the session still works.
     pub async fn health_check(&self, tokens: &TokenSet) -> R<()> {
         self.get_json(&format!("{BASE}/me"), tokens).await?;
@@ -156,134 +272,95 @@ impl QuotaClient {
     }
 
     /// Pull every quota signal for an account. With `with_stats` false the
-    /// heavier daily-usage call is skipped and previous stats are kept by the
+    /// heavier analytics call is skipped and previous stats are kept by the
     /// caller.
     pub async fn fetch_snapshot(
         &self,
         tokens: &TokenSet,
         with_stats: bool,
     ) -> Result<UsageSnapshot, QuotaError> {
-        let account_id = self
-            .check_account(tokens)
-            .await
-            .map_err(|e| QuotaError::Other(e.to_string()))?
-            .unwrap_or_default();
-        if account_id.is_empty() {
-            return Err(QuotaError::Other(
-                "could not resolve the ChatGPT account id".into(),
-            ));
-        }
-
         let mut snap = UsageSnapshot {
             fetched_at: Utc::now().timestamp(),
-            account_id: Some(account_id.clone()),
+            account_id: tokens.account_id.clone(),
             ..Default::default()
         };
 
-        // Profile + plan + subscription expiry.
-        let me = self.get_json(&format!("{BASE}/me"), tokens).await?;
-        snap.plan = dig_string(&me, "entitled_plan")
-            .or_else(|| dig_string(&me, "plan_type"));
-        snap.subscription_expires_at =
-            dig_i64(&me, "subscription_expires_at").or_else(|| dig_i64(&me, "expires_at"));
-
-        // Session / weekly limits in seconds.
-        let usage = self
-            .get_json(&format!("{BASE}/accounts/{account_id}/usage"), tokens)
-            .await?;
-        snap.system_hard_limit_usd =
-            dig_f64(&usage, "system_hard_limit_usd").or_else(|| dig_f64(&usage, "hard_limit_usd"));
-        let capped = usage.get("capped").and_then(|c| c.get("daily_usage_limit_seconds"));
-        let free = usage.get("free_tier").and_then(|c| c.get("daily_usage_limit_seconds"));
-        let soft_hard = |v: Option<&Value>| -> Option<SoftHard> {
-            v.map(|s| SoftHard {
-                soft: s.get("soft").and_then(Value::as_i64),
-                hard: s.get("hard").and_then(Value::as_i64),
-            })
-        };
-        snap.session_seconds = soft_hard(capped).or_else(|| soft_hard(free));
-
-        // Token buckets: pick the most constrained 5h and weekly windows.
-        let rl = self
-            .get_json(&format!("{BASE}/accounts/{account_id}/rate_limits"), tokens)
-            .await?;
-        snap.system_hard_limit_usd =
-            snap.system_hard_limit_usd.or_else(|| dig_f64(&rl, "system_hard_limit_usd"));
-        if let Some(buckets) = rl.get("buckets").and_then(Value::as_object) {
-            let mut session: Vec<RateBucket> = Vec::new();
-            let mut weekly: Vec<RateBucket> = Vec::new();
-            for (name, b) in buckets {
-                let Some(reset_at) = b.get("reset_at").and_then(Value::as_i64) else {
-                    continue;
-                };
-                let window = b
-                    .get("window")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let bucket = RateBucket {
-                    name: name.clone(),
-                    window: window.clone(),
-                    reset_at,
-                    maximum_tokens: b.get("maximum_tokens").and_then(Value::as_f64).unwrap_or(0.0),
-                    remaining_tokens: b
-                        .get("remaining_tokens")
-                        .and_then(Value::as_f64)
-                        .unwrap_or(0.0),
-                    used_tokens: b.get("used_tokens").and_then(Value::as_f64).unwrap_or(0.0),
-                };
-                let lname = name.to_lowercase();
-                if window == "weekly" || lname.contains("weekly") {
-                    weekly.push(bucket);
-                } else if window == "5h" || lname.contains("codex") {
-                    session.push(bucket);
-                }
-            }
-            snap.session = pick_most_constrained(session);
-            snap.weekly = pick_most_constrained(weekly);
+        // The single source of truth for Codex quota: plan, both rate-limit
+        // windows, credits, spend control, and reset credits.
+        let v = self.get_json(&format!("{BASE}/codex/usage"), tokens).await?;
+        snap.plan = dig_string(&v, "plan_type");
+        if snap.account_id.is_none() {
+            snap.account_id = dig_string(&v, "account_id");
         }
 
-        // Manual reset credits (the endpoint only exists for eligible plans).
-        if let Ok(v) = self
-            .get_json(
-                &format!("{BASE}/accounts/{account_id}/manual_reset_credits"),
-                tokens,
-            )
+        let rl = v.get("rate_limit");
+        for key in ["primary_window", "secondary_window"] {
+            let Some(w) = rl.and_then(|r| r.get(key)) else { continue };
+            let Some(reset_at) = w.get("reset_at").and_then(Value::as_i64) else { continue };
+            let used = w.get("used_percent").and_then(Value::as_f64).unwrap_or(0.0);
+            let window_seconds = w.get("limit_window_seconds").and_then(Value::as_i64).unwrap_or(0);
+            let is_session = window_seconds > 0 && window_seconds <= 21_600; // <= 6h
+            let bucket = RateBucket {
+                name: if is_session { "session".into() } else { "weekly".into() },
+                window: if is_session { "5h".into() } else { "weekly".into() },
+                reset_at,
+                maximum_tokens: 100.0,
+                remaining_tokens: (100.0 - used).max(0.0),
+                used_tokens: used,
+                unit: "pct".into(),
+            };
+            if is_session {
+                if snap.session.is_none() {
+                    snap.session = Some(bucket);
+                }
+            } else if snap.weekly.is_none() {
+                snap.weekly = Some(bucket);
+            }
+        }
+
+        if let Some(c) = v.get("credits") {
+            snap.system_hard_limit_usd = c
+                .get("balance")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<f64>().ok());
+        }
+
+        // Reset credits: count from the usage payload, entries from the
+        // dedicated endpoint (may be empty).
+        let available = v
+            .get("rate_limit_reset_credits")
+            .and_then(|c| c.get("available_count").and_then(Value::as_i64))
+            .unwrap_or(0);
+        let mut resets = Vec::new();
+        if let Ok(rc) = self
+            .get_json(&format!("{BASE}/wham/rate-limit-reset-credits"), tokens)
             .await
         {
-            let resets = v
-                .get("resets")
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|r| {
-                            Some(ResetCredit {
-                                id: r
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .to_string(),
-                                expires_at: r.get("expires_at").and_then(Value::as_i64)?,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            snap.reset_credits = Some(ResetCredits {
-                available_count: v.get("available_count").and_then(Value::as_i64).unwrap_or(0),
-                resets,
-            });
+            if let Some(entries) = rc.get("credits").and_then(Value::as_array) {
+                for e in entries {
+                    if let Some(exp) = dig_i64(e, "expires_at").or_else(|| dig_i64(e, "expiration")) {
+                        resets.push(ResetCredit {
+                            id: dig_string(e, "id").unwrap_or_default(),
+                            expires_at: exp,
+                        });
+                    }
+                }
+            }
         }
+        snap.reset_credits = Some(ResetCredits {
+            available_count: available,
+            resets,
+        });
 
-        // Full usage history (skipped on routine refreshes).
+        // Daily usage history (skipped on routine refreshes).
         if with_stats {
-            let start = (Utc::now() - Duration::days(2500)).format("%Y-%m-%d");
+            let start = (Utc::now() - Duration::days(30)).format("%Y-%m-%d");
             let end = Utc::now().format("%Y-%m-%d");
             let url = format!(
-                "{BASE}/accounts/{account_id}/daily_usage?start_date={start}&end_date={end}"
+                "{BASE}/wham/analytics/daily-plugin-usage-metrics?start_date={start}&end_date={end}&group_by=day"
             );
-            if let Ok(v) = self.get_json(&url, tokens).await {
-                snap.stats = compute_stats(&v);
+            if let Ok(daily) = self.get_json(&url, tokens).await {
+                snap.stats = compute_stats(&daily);
             }
         }
 
@@ -291,32 +368,21 @@ impl QuotaClient {
     }
 }
 
-/// Most-constrained = lowest remaining/maximum fraction (excluding zero max).
-fn pick_most_constrained(buckets: Vec<RateBucket>) -> Option<RateBucket> {
-    buckets.into_iter().min_by(|a, b| {
-        let ra = if a.maximum_tokens > 0.0 {
-            a.remaining_tokens / a.maximum_tokens
-        } else {
-            1.0
-        };
-        let rb = if b.maximum_tokens > 0.0 {
-            b.remaining_tokens / b.maximum_tokens
-        } else {
-            1.0
-        };
-        ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
-    })
-}
-
 // ---------- daily usage stats ----------
 
 fn compute_stats(daily: &Value) -> Option<UsageStats> {
-    let mut days: Vec<DayPoint> = daily
-        .get("daily_usage")
-        .and_then(Value::as_array)?
+    let arr = daily
+        .get("data")
+        .and_then(Value::as_array)
+        .or_else(|| daily.get("daily_usage").and_then(Value::as_array))?;
+    let mut days: Vec<DayPoint> = arr
         .iter()
         .filter_map(|d| {
-            let date = d.get("date").and_then(Value::as_str)?;
+            let date = d
+                .get("date")
+                .or_else(|| d.get("day"))
+                .or_else(|| d.get("usage_date"))
+                .and_then(Value::as_str)?;
             let tokens = sum_tokens(d);
             Some(DayPoint {
                 date: date.to_string(),
@@ -325,6 +391,9 @@ fn compute_stats(daily: &Value) -> Option<UsageStats> {
         })
         .collect();
     days.sort_by(|a, b| a.date.cmp(&b.date));
+    if days.is_empty() {
+        return None;
+    }
 
     let last30: Vec<&DayPoint> = days.iter().rev().take(30).collect();
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -367,29 +436,30 @@ fn compute_stats(daily: &Value) -> Option<UsageStats> {
 
     // Per-integration aggregation, wherever the backend reports it.
     let mut integrations: Vec<NameValue> = Vec::new();
-    if let Some(arr) = daily.get("daily_usage").and_then(Value::as_array) {
-        for d in arr {
-            for key in ["top_integrations", "integrations", "breakdown"] {
-                if let Some(list) = d.get(key).and_then(Value::as_array) {
-                    for item in list {
-                        let name = item
-                            .get("name")
-                            .or_else(|| item.get("title"))
-                            .or_else(|| item.get("integration"))
-                            .and_then(Value::as_str);
-                        let val = item
-                            .get("tokens")
-                            .or_else(|| item.get("value"))
-                            .or_else(|| item.get("usage_seconds"))
-                            .and_then(Value::as_f64);
-                        if let (Some(name), Some(val)) = (name, val) {
-                            match integrations.iter_mut().find(|i| i.name == name) {
-                                Some(e) => e.tokens += val,
-                                None => integrations.push(NameValue {
-                                    name: name.to_string(),
-                                    tokens: val,
-                                }),
-                            }
+    for d in arr {
+        for key in ["top_integrations", "integrations", "breakdown", "plugins", "agents"] {
+            if let Some(list) = d.get(key).and_then(Value::as_array) {
+                for item in list {
+                    let name = item
+                        .get("name")
+                        .or_else(|| item.get("title"))
+                        .or_else(|| item.get("integration"))
+                        .or_else(|| item.get("plugin"))
+                        .or_else(|| item.get("agent"))
+                        .and_then(Value::as_str);
+                    let val = item
+                        .get("tokens")
+                        .or_else(|| item.get("value"))
+                        .or_else(|| item.get("usage_seconds"))
+                        .or_else(|| item.get("count"))
+                        .and_then(Value::as_f64);
+                    if let (Some(name), Some(val)) = (name, val) {
+                        match integrations.iter_mut().find(|i| i.name == name) {
+                            Some(e) => e.tokens += val,
+                            None => integrations.push(NameValue {
+                                name: name.to_string(),
+                                tokens: val,
+                            }),
                         }
                     }
                 }

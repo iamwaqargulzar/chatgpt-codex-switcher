@@ -29,6 +29,8 @@ export interface RateBucket {
   maximumTokens: number;
   remainingTokens: number;
   usedTokens: number;
+  /** "pct" when the backend reports percentages, "tokens" otherwise. */
+  unit: string;
 }
 
 export interface SoftHard {
@@ -148,7 +150,7 @@ export interface StatusBundle {
   terminalPresets: [string, string, boolean][];
 }
 
-export interface OAuthDone {
+export interface AuthDonePayload {
   ok: boolean;
   error: string | null;
   account: { id: string; name: string } | null;

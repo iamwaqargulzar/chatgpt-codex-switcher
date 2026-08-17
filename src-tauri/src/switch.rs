@@ -34,7 +34,10 @@ pub fn auth_json_for(account: &Account) -> serde_json::Value {
 
 pub fn write_auth_json(paths: &Paths, account: &Account) -> R<()> {
     let text = serde_json::to_string_pretty(&auth_json_for(account))?;
-    fs::write(&paths.auth_json, text)?;
+    // Atomic replace so an interrupted write can't corrupt the CLI's auth.
+    let tmp = paths.auth_json.with_extension("json.tmp");
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, &paths.auth_json)?;
     set_private(&paths.auth_json);
     Ok(())
 }

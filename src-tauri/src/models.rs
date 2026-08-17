@@ -97,6 +97,8 @@ pub struct RateBucket {
     pub maximum_tokens: f64,
     pub remaining_tokens: f64,
     pub used_tokens: f64,
+    /// "pct" when the backend reports percentages, "tokens" otherwise.
+    pub unit: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

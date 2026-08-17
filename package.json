@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "cli:install": "cargo install --path src-tauri --bin codexdesk"
+    "cli:install": "cargo install --path src-tauri --bin codexdesk-cli"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
