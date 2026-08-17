@@ -30,7 +30,6 @@ impl From<QuotaError> for AppError {
 #[derive(Clone)]
 pub struct QuotaClient {
     http: reqwest::Client,
-    gate: Option<crate::gate::Gate>,
 }
 
 impl QuotaClient {
@@ -41,14 +40,7 @@ impl QuotaClient {
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("static reqwest client"),
-            gate: None,
         }
-    }
-
-    pub fn with_gate(gate: crate::gate::Gate) -> Self {
-        let mut c = Self::new();
-        c.gate = Some(gate);
-        c
     }
 
     /// Headers for account-scoped backend calls. The access token
@@ -101,8 +93,7 @@ impl QuotaClient {
         Ok((status, body))
     }
 
-    /// Fetch JSON from the ChatGPT backend. Cloudflare 403s fall back to the
-    /// hidden webview gate, which carries a real challenge clearance.
+    /// Fetch JSON from the ChatGPT backend.
     async fn get_json(&self, url: &str, tokens: &TokenSet) -> Result<Value, QuotaError> {
         let (status, body) = self.raw(url, tokens).await?;
         #[cfg(debug_assertions)]
@@ -113,32 +104,9 @@ impl QuotaClient {
         if status == 401 {
             return Err(QuotaError::Unauthorized);
         }
-
-        // Anything else (403 challenge pages, 5xx) gets one gate attempt.
-        if let Some(gate) = &self.gate {
-            let bearer = tokens
-                .id_token
-                .clone()
-                .unwrap_or_else(|| tokens.access_token.clone());
-            let (gstatus, gbody) = gate
-                .fetch("GET", url, &bearer, None)
-                .await
-                .map_err(QuotaError::Other)?;
-            if gstatus == 200 {
-                return serde_json::from_str(&gbody)
-                    .map_err(|e| QuotaError::Other(e.to_string()));
-            }
-            if gstatus == 401 {
-                return Err(QuotaError::Unauthorized);
-            }
-            let preview = gbody.chars().take(120).collect::<String>();
-            return Err(QuotaError::Other(format!(
-                "backend responded {gstatus}: {preview}"
-            )));
-        }
-
+        let preview = body.chars().take(120).collect::<String>();
         Err(QuotaError::Other(format!(
-            "backend responded {status} (blocked by Cloudflare — retry in a moment)"
+            "backend responded {status}: {preview}"
         )))
     }
 
@@ -198,31 +166,9 @@ impl QuotaClient {
         Ok(resp.json().await?)
     }
 
-    /// Diagnostics helper (CODEXDESK_PROBE): fetch a URL directly and via
-    /// the gate, printing status lines to stderr. When CODEXDESK_PROBE_METHOD
-    /// is POST, CODEXDESK_PROBE_BODY is sent through the gate only.
+    /// Diagnostics helper (CODEXDESK_PROBE): fetch a URL directly, printing
+    /// the status line to stderr and dumping the body to /tmp/probe_body.bin.
     pub async fn probe(&self, url: &str, tokens: &TokenSet) {
-        let method = std::env::var("CODEXDESK_PROBE_METHOD").unwrap_or_else(|_| "GET".into());
-        let body = std::env::var("CODEXDESK_PROBE_BODY").ok();
-        if method == "POST" {
-            if let Some(gate) = &self.gate {
-                let bearer = tokens
-                    .id_token
-                    .clone()
-                    .unwrap_or_else(|| tokens.access_token.clone());
-                match gate.fetch("POST", url, &bearer, body.as_deref()).await {
-                    Ok((s, b)) => {
-                        eprintln!("[probe] gate {s} <- {url} ({} bytes)", b.len());
-                        let _ = std::fs::write("/tmp/probe_body.bin", &b);
-                        if s != 200 {
-                            eprintln!("[probe] gate body: {}", b.chars().take(300).collect::<String>());
-                        }
-                    }
-                    Err(e) => eprintln!("[probe] gate error: {e}"),
-                }
-            }
-            return;
-        }
         match self.raw(url, tokens).await {
             Ok((s, body)) => {
                 eprintln!("[probe] direct {s} <- {url} ({} bytes)", body.len());
@@ -232,21 +178,6 @@ impl QuotaClient {
                 }
             }
             Err(e) => eprintln!("[probe] direct error: {e:?}"),
-        }
-        if let Some(gate) = &self.gate {
-            let bearer = tokens
-                .id_token
-                .clone()
-                .unwrap_or_else(|| tokens.access_token.clone());
-            match gate.fetch("GET", url, &bearer, None).await {
-                Ok((s, body)) => {
-                    eprintln!("[probe] gate {s} <- {url}");
-                    if s != 200 {
-                        eprintln!("[probe] gate body: {}", body.chars().take(200).collect::<String>());
-                    }
-                }
-                Err(e) => eprintln!("[probe] gate error: {e}"),
-            }
         }
     }
 

@@ -1,7 +1,6 @@
 pub mod authz;
 pub mod desktop;
 pub mod error;
-pub mod gate;
 pub mod models;
 pub mod notify;
 pub mod paths;
@@ -874,18 +873,11 @@ pub fn run() {
             let warmup_engine = warmup::Warmup::new();
             let notify_engine = notify::Notify::new();
 
-            // Cloudflare gate: a tiny off-screen webview on chatgpt.com that
-            // carries a real challenge clearance for backend-api fetches.
-            gate::Gate::ensure_window(app)?;
-            let gate = gate::Gate::new(app.handle());
-            app.manage(gate.clone());
-            gate::listen(app.handle());
-
             let state = AppState {
                 paths: paths.clone(),
                 vault: Arc::new(Mutex::new(vault)),
                 settings: Arc::new(Mutex::new(settings.clone())),
-                http: quota::QuotaClient::with_gate(gate),
+                http: quota::QuotaClient::new(),
                 warmup: warmup_engine,
                 notify: notify_engine,
                 quitting: Arc::new(AtomicBool::new(false)),
@@ -920,9 +912,8 @@ pub fn run() {
                 });
             }
 
-            // Diagnostics: CODEXDESK_PROBE=<url> fetches it directly and via
-            // the gate, printing results to stderr. CODEXDESK_PROBE=home:<url>
-            // additionally downloads every JS bundle the page references.
+            // Diagnostics: CODEXDESK_PROBE=<url> fetches it directly,
+            // printing the status to stderr and the body to /tmp/probe_body.bin.
             if let Ok(probe_url) = std::env::var("CODEXDESK_PROBE") {
                 let http = state.http.clone();
                 let tokens = {
@@ -935,33 +926,7 @@ pub fn run() {
                 if let Some(tokens) = tokens {
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                        if let Some(page) = probe_url.strip_prefix("home:") {
-                            http.probe(page, &tokens).await;
-                            let Ok(body) = std::fs::read("/tmp/probe_body.bin") else { return };
-                            let body = String::from_utf8_lossy(&body).to_string();
-                            let mut dump = String::new();
-                            let mut seen = std::collections::HashSet::new();
-                            let mut count = 0;
-                            for m in extract_scripts(&body) {
-                                if !seen.insert(m.clone()) || count >= 80 {
-                                    continue;
-                                }
-                                let url = format!("https://chatgpt.com{m}");
-                                eprintln!("[probe] bundle {url}");
-                                if let Ok((s, b)) = http.raw(&url, &tokens).await {
-                                    eprintln!("[probe]   {s} ({} bytes)", b.len());
-                                    if s == 200 {
-                                        dump.push_str(&b);
-                                        dump.push('\n');
-                                        count += 1;
-                                    }
-                                }
-                            }
-                            let _ = std::fs::write("/tmp/probe_bundle_dump.js", dump);
-                            eprintln!("[probe] dumped {count} bundles");
-                        } else {
-                            http.probe(&probe_url, &tokens).await;
-                        }
+                        http.probe(&probe_url, &tokens).await;
                     });
                 }
             }
@@ -998,21 +963,4 @@ pub fn run() {
 fn _module_marker() {
     let _ = paths::resolve();
     let _ = error::R::<()>::Ok(());
-}
-
-/// Extract `/cdn/assets/*.js` references from an HTML page (diagnostics).
-fn extract_scripts(html: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for marker in ["href=\"", "src=\""] {
-        let mut rest = html;
-        while let Some(pos) = rest.find(marker) {
-            rest = &rest[pos + marker.len()..];
-            let Some(end) = rest.find('"') else { break };
-            let link = &rest[..end];
-            if link.starts_with("/cdn/assets/") && link.ends_with(".js") {
-                out.push(link.to_string());
-            }
-        }
-    }
-    out
 }

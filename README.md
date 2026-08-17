@@ -135,7 +135,7 @@ Yes. Import an `auth.json` containing an `OPENAI_API_KEY`, or paste a key direct
 - [x] Per-account profiles and session browser
 - [x] Tray menu, tray popup, notifications, hotkeys
 - [x] CLI companion (`codexdesk-cli`)
-- [x] Cloudflare gate for live usage data
+- [x] Live quota pipeline (current ChatGPT backend endpoints)
 - [ ] First signed release builds (.deb, AppImage, rpm)
 - [ ] macOS and Windows builds
 - [ ] Encrypted vault export/import for backups
@@ -147,7 +147,7 @@ Yes. Import an `auth.json` containing an `OPENAI_API_KEY`, or paste a key direct
 - **No listening ports** in normal operation (the OAuth callback binds to `127.0.0.1` only while a login is in progress).
 - **No auto-update daemon** — updates are checked only when you ask.
 - **Vault encrypted** with AES-256-GCM using a key stored in your OS keyring (falls back to `0600`-permission plaintext with a visible warning if no keyring is available).
-- **Cloudflare gate, transparently:** `chatgpt.com` sits behind Cloudflare's managed challenge, so plain HTTP clients can get 403 on some routes. CodexDesk keeps a tiny off-screen webview parked on `chatgpt.com` — a real browser engine that carries a genuine challenge clearance — and uses it to run the same-origin `backend-api` fetches when a direct request is challenged. That page can only emit the single fetch-reply event (its IPC capability is locked down), and no cookies are scraped from your browsers.
+- **Single window, no surprises:** CodexDesk opens exactly its own two windows — the dashboard and the tray popup. There is no hidden browser or auxiliary page; every network request is a direct HTTPS call to the OpenAI hosts listed above.
 
 ## Contributing
 
