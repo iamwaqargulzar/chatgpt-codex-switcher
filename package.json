@@ -1,7 +1,7 @@
 {
   "name": "codexdesk",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Desktop control center for the official Codex CLI: account vault, quota monitoring, warm-ups, profiles and sessions.",
   "type": "module",
   "scripts": {

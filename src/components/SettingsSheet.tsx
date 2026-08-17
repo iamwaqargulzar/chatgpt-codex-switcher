@@ -21,6 +21,18 @@ export function SettingsSheet({
 
   const patch = (p: Partial<Settings>) => setS((prev) => ({ ...prev, ...p }));
 
+  // Toggles apply instantly — no Save needed. Persists and lets the app
+  // reload so the change is visible the moment the sheet closes.
+  const liveApply = (p: Partial<Settings>) => {
+    setS((prev) => {
+      const next = { ...prev, ...p };
+      saveSettings(next)
+        .then((saved) => onSaved(saved))
+        .catch((e) => alert(String(e)));
+      return next;
+    });
+  };
+
   const save = async () => {
     setBusy(true);
     try {
@@ -75,20 +87,20 @@ export function SettingsSheet({
           />
         ))}
 
-        {row("Desktop notifications", "low-limit and window-reset alerts", (
-          <Switch checked={s.notifications} onChange={(v) => patch({ notifications: v })} />
+        {row("Desktop notifications", "low-limit and window-reset alerts (applies instantly)", (
+          <Switch checked={s.notifications} onChange={(v) => liveApply({ notifications: v })} />
         ))}
 
-        {row("Launch at login", "start CodexDesk with your session", (
-          <Switch checked={s.launchAtLogin} onChange={(v) => patch({ launchAtLogin: v })} />
+        {row("Launch at login", "start CodexDesk with your session (applies instantly)", (
+          <Switch checked={s.launchAtLogin} onChange={(v) => liveApply({ launchAtLogin: v })} />
         ))}
 
-        {row("Compact mode", "denser layout for small screens", (
-          <Switch checked={s.compact} onChange={(v) => patch({ compact: v })} />
+        {row("Compact mode", "denser layout for small screens (applies instantly)", (
+          <Switch checked={s.compact} onChange={(v) => liveApply({ compact: v })} />
         ))}
 
-        {row("Blur email addresses", "emails are blurred until you hover over them", (
-          <Switch checked={s.hideEmails} onChange={(v) => patch({ hideEmails: v })} />
+        {row("Blur email addresses", "emails are blurred until you hover over them (applies instantly)", (
+          <Switch checked={s.hideEmails} onChange={(v) => liveApply({ hideEmails: v })} />
         ))}
 
         {row("Usage refresh interval", "seconds between background quota refreshes", (
