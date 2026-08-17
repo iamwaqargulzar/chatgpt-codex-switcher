@@ -1,7 +1,7 @@
 {
   "name": "codexdesk",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop control center for the official Codex CLI: account vault, quota monitoring, warm-ups, profiles and sessions.",
   "type": "module",
   "scripts": {
@@ -9,7 +9,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "cli:install": "cargo install --path src-tauri --bin codexdesk-cli"
+    "cli:install": "cargo install --path src-tauri --bin codexdesk-cli",
+    "version:bump": "node scripts/bump-version.mjs",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:major": "node scripts/bump-version.mjs major"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
