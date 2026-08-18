@@ -1,6 +1,6 @@
 [package]
 name = "codexdesk"
-version = "0.1.2"
+version = "0.1.3"
 description = "Desktop control center for the official Codex CLI"
 authors = ["CodexDesk contributors"]
 edition = "2021"

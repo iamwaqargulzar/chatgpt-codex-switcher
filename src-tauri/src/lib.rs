@@ -158,27 +158,16 @@ async fn refresh_account(
     Ok(snap)
 }
 
-async fn refresh_active(app: &AppHandle<tauri::Wry>, with_stats: bool) {
+async fn refresh_active(app: &AppHandle<tauri::Wry>, with_stats: bool) -> R<UsageSnapshot> {
     let active = {
         let state = app.state::<AppState>();
         let vault = state.vault.lock().unwrap();
         vault.active_id()
     };
     let Some(id) = active else {
-        return;
+        return Err(AppError::Msg("no active account".into()));
     };
-    let _ = refresh_account(app, &id, with_stats).await;
-}
-
-async fn refresh_all(app: &AppHandle<tauri::Wry>) {
-    let ids: Vec<String> = {
-        let state = app.state::<AppState>();
-        let vault = state.vault.lock().unwrap();
-        vault.accounts().into_iter().map(|a| a.id).collect()
-    };
-    for id in ids {
-        let _ = refresh_account(app, &id, false).await;
-    }
+    refresh_account(app, &id, with_stats).await
 }
 
 // ---------- commands ----------
@@ -555,10 +544,35 @@ async fn desk_refresh_usage(app: AppHandle, id: String) -> R<UsageSnapshot> {
     refresh_account(&app, &id, true).await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshSummary {
+    refreshed: usize,
+    failed: Vec<String>,
+}
+
 #[tauri::command]
-async fn desk_refresh_all(app: AppHandle) -> R<()> {
-    refresh_all(&app).await;
-    Ok(())
+async fn desk_refresh_all(app: AppHandle) -> R<RefreshSummary> {
+    let accounts: Vec<(String, String)> = {
+        let state = app.state::<AppState>();
+        let vault = state.vault.lock().unwrap();
+        vault
+            .accounts()
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect()
+    };
+    let mut summary = RefreshSummary {
+        refreshed: 0,
+        failed: Vec::new(),
+    };
+    for (id, name) in accounts {
+        match refresh_account(&app, &id, false).await {
+            Ok(_) => summary.refreshed += 1,
+            Err(e) => summary.failed.push(format!("{name}: {e}")),
+        }
+    }
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -755,8 +769,16 @@ fn on_menu_event(app: &AppHandle<tauri::Wry>, id: &str) {
         return;
     }
     if id == "refresh" {
+        let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
-            refresh_active(&app, false).await;
+            match refresh_active(&app2, false).await {
+                Ok(_) => {
+                    let _ = app2.emit("toast://show", "usage refreshed");
+                }
+                Err(e) => {
+                    let _ = app2.emit("toast://show", format!("refresh failed: {e}"));
+                }
+            }
         });
         return;
     }
@@ -928,7 +950,7 @@ pub fn run() {
             {
                 let app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    refresh_active(&app, true).await;
+                    let _ = refresh_active(&app, true).await;
                 });
             }
 

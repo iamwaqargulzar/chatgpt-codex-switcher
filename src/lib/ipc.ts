@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   ProcessInfo,
   ProfileInfo,
+  RefreshSummary,
   SessionInfo,
   Settings,
   StatusBundle,
@@ -33,7 +34,7 @@ export const switchAccount = (id: string, force: boolean) =>
   invoke<SwitchResult>("desk_switch", { id, force });
 export const restoreBackup = () => invoke<boolean>("desk_restore_backup");
 export const refreshUsage = (id: string) => invoke<UsageSnapshot>("desk_refresh_usage", { id });
-export const refreshAll = () => invoke<void>("desk_refresh_all");
+export const refreshAll = () => invoke<RefreshSummary>("desk_refresh_all");
 export const warmup = (ids?: string[]) => invoke<void>("desk_warmup", { ids });
 export const activityLog = (limit = 50) => invoke<ActivityEntry[]>("desk_activity_log", { limit });
 export const auditLog = (limit = 50) => invoke<AuditEntry[]>("desk_audit_log", { limit });

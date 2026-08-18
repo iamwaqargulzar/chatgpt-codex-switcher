@@ -45,6 +45,7 @@ export default function App() {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [oauthStep, setOauthStep] = useState("");
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -189,6 +190,25 @@ export default function App() {
       toast(String(e), true);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const doRefreshAll = async () => {
+    setRefreshingAll(true);
+    try {
+      const r = await refreshAll();
+      if (r.failed.length > 0) {
+        toast(`refresh failed for ${r.failed.join("; ")}`, true);
+      } else {
+        toast(
+          `refreshed ${r.refreshed} account${r.refreshed === 1 ? "" : "s"}`,
+        );
+      }
+      load();
+    } catch (e) {
+      toast(String(e), true);
+    } finally {
+      setRefreshingAll(false);
     }
   };
 
@@ -352,9 +372,10 @@ export default function App() {
           <button
             className="btn"
             title="Refresh usage for every account"
-            onClick={() => void refreshAll().then(load).catch((e) => toast(String(e), true))}
+            disabled={refreshingAll}
+            onClick={() => void doRefreshAll()}
           >
-            ↻
+            {refreshingAll ? <span className="spin" /> : "↻"}
           </button>
         </div>
       </aside>

@@ -96,6 +96,11 @@ export interface SwitchResult {
   blocked: ProcessInfo[];
 }
 
+export interface RefreshSummary {
+  refreshed: number;
+  failed: string[];
+}
+
 export interface ActivityEntry {
   ts: number;
   accountId: string;
